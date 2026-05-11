@@ -2,6 +2,8 @@
 
 Unified tunnel manager for Linux servers. Manages DNS tunnels (DNSTT, NoizDNS, Slipstream, VayDNS) and HTTPS proxies (NaiveProxy) with systemd services, multi-tunnel DNS routing, and user management. Designed for use with the [SlipNet](https://github.com/anonvector/SlipNet) Android VPN app.
 
+[![oosmetrics](https://api.oosmetrics.com/api/v1/badge/achievement/12767996-2dd6-42ed-89a6-5f786c4662b4.svg)](https://oosmetrics.com/repo/anonvector/slipgate)
+
 ## Features
 
 - **Multi-transport**: DNSTT/NoizDNS (DNS tunnels with Curve25519 encryption), Slipstream (QUIC-based DNS), VayDNS (KCP-based DNS with Curve25519), NaiveProxy (HTTPS with Caddy), StunTLS (SSH over TLS + WebSocket)
