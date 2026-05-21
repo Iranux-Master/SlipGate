@@ -9,7 +9,7 @@
   "script": {
     "id": "slipgate-flag-based-installer",
     "name": "SlipGate Flag-Based Installer",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "description": "Downloads the SlipGate binary and runs a non-interactive installation using command-line flags."
   },
   "risk": {
@@ -27,38 +27,17 @@ IRANUX_METADATA
 # SlipGate Iranux-compatible installer.
 # This script expects a SlipGate binary that supports:
 #   slipgate install --non-interactive --flags...
-# It intentionally collects all install inputs before running the binary.
+#
+# It collects all install inputs before running the binary.
+# The "All Transports" UI option sends value "all".
+# The binary should also accept legacy value "8" for backward compatibility.
 
 set -e
 
 REPO="anonvector/slipgate"
 
-: <<'IRANUX_PARAM'
-{
-  "name": "install_dir",
-  "label": "Install Directory",
-  "description": "Directory where the SlipGate binary will be installed.",
-  "type": "path",
-  "required": true,
-  "default": "/usr/local/bin",
-  "example": "/usr/local/bin",
-  "group": "Download Settings"
-}
-IRANUX_PARAM
-
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 
-: <<'IRANUX_PARAM'
-{
-  "name": "slipgate_release_tag",
-  "label": "SlipGate Release Tag",
-  "description": "Optional SlipGate release tag, for example v1.5.1. Leave empty to download the latest stable release.",
-  "type": "string",
-  "required": false,
-  "placeholder": "v1.5.1",
-  "group": "Download Settings"
-}
-IRANUX_PARAM
 
 SLIPGATE_RELEASE_TAG="${SLIPGATE_RELEASE_TAG:-}"
 
@@ -66,10 +45,11 @@ SLIPGATE_RELEASE_TAG="${SLIPGATE_RELEASE_TAG:-}"
 {
   "name": "transports",
   "label": "Transports",
-  "description": "Select SlipGate transports to install. The Iranux runner should pass selected values as a comma-separated string.",
+  "description": "Select SlipGate transports to install. Select All Transports to install every supported transport. The Iranux runner should pass selected values as a comma-separated string.",
   "type": "multi_select",
   "required": true,
   "options": [
+    { "label": "All Transports", "value": "all", "description": "Install all supported SlipGate transports." },
     { "label": "DNSTT / NoizDNS", "value": "dnstt" },
     { "label": "VayDNS", "value": "vaydns" },
     { "label": "Slipstream", "value": "slipstream" },
