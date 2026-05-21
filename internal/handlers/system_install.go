@@ -1,74 +1,67 @@
 // slipgate_install_flag_mode_patch.go
 //
-// Purpose:
-// Adds the non-interactive flag-based install plan needed by Iranux.
+// SlipGate non-interactive flag-based install support for Iranux.
 //
-// IMPORTANT INTEGRATION NOTES:
-// 1. Place this file in the same package as the existing install handler:
-//      package handlers
+// Place this file in the same package as the existing system install handler:
 //
-// 2. Register these install flags in the SlipGate command definition:
-//      --non-interactive
-//      --transports
-//      --backend
-//      --base-domain
-//      --dnstt-domain
-//      --vaydns-domain
-//      --slipstream-domain
-//      --naive-domain
-//      --dnstt-ssh-domain
-//      --vaydns-ssh-domain
-//      --slipstream-ssh-domain
-//      --mtu
-//      --vaydns-record-type
-//      --stuntls-port
-//      --naive-email
-//      --naive-decoy-url
-//      --create-user
-//      --username
-//      --password
-//      --enable-warp
-//      --warp-ipv6
-//      --bin-dir
+//     package handlers
 //
-// 3. Refactor handleSystemInstall(ctx) into this shape:
+// This file adds the non-interactive install-plan builder used by:
 //
-//      func handleSystemInstall(ctx *actions.Context) error {
-//          out := ctx.Output
+//     slipgate install --non-interactive --flags...
 //
-//          if runtime.GOOS != "linux" {
-//              return actions.NewError(actions.SystemInstall, "slipgate only supports Linux servers", nil)
-//          }
+// IMPORTANT:
+// This file is designed to be integrated with the existing install handler.
+// It does not replace the full handler by itself. The existing handler should
+// be refactored into:
 //
-//          if binDir := ctx.GetArg("bin-dir"); binDir != "" {
-//              binary.OfflineDir = binDir
-//              out.Info(fmt.Sprintf("Offline mode: using binaries from %s", binDir))
-//          }
+//     collectSystemInstallPlanInteractive(ctx, out, cfg)
+//     collectSystemInstallPlanFromFlags(ctx, out, cfg)
+//     runSystemInstallPlan(ctx, out, cfg, plan)
 //
-//          cfg, err := config.Load()
-//          if err != nil {
-//              cfg = config.Default()
-//          }
+// The uploaded installer already has a clear split between:
+//     PHASE 1 — interactive prompt collection
+//     PHASE 2 — non-interactive installation
 //
-//          var plan *systemInstallPlan
-//          if flagBool(ctx, "non-interactive") {
-//              plan, err = collectSystemInstallPlanFromFlags(ctx, out, cfg)
-//          } else {
-//              prompt.FlushStdin()
-//              plan, err = collectSystemInstallPlanInteractive(ctx, out, cfg) // move current PHASE 1 here
-//          }
-//          if err != nil {
-//              return err
-//          }
+// Interactive mode should keep the current prompt behavior.
+// Non-interactive mode should call collectSystemInstallPlanFromFlags and then
+// run the same Phase 2 install logic.
 //
-//          return runSystemInstallPlan(ctx, out, cfg, plan) // move current PHASE 2 here
-//      }
+// Required install flags to register:
 //
-// 4. The current uploaded handler already has:
-//      PHASE 1 — All interactive prompts
-//      PHASE 2 — Non-interactive installation
-//    This patch formalizes that split. Interactive mode keeps the old prompts.
-//    Non-interactive mode builds the same install plan from flags.
+//     --non-interactive
+//     --transports
+//     --backend
+//     --base-domain
+//     --dnstt-domain
+//     --vaydns-domain
+//     --slipstream-domain
+//     --naive-domain
+//     --dnstt-ssh-domain
+//     --vaydns-ssh-domain
+//     --slipstream-ssh-domain
+//     --mtu
+//     --vaydns-record-type
+//     --stuntls-port
+//     --naive-email
+//     --naive-decoy-url
+//     --create-user
+//     --username
+//     --password
+//     --enable-warp
+//     --warp-ipv6
+//     --bin-dir
+//
+// Transport selection supports both:
+//     --transports "all"
+//     --transports "8"
+// as aliases for all supported transports.
+//
+// Recommended stable value for Iranux UI:
+//     all
+//
+// Backward-compatible accepted value:
+//     8
 
 package handlers
 
@@ -84,17 +77,18 @@ import (
 	"github.com/anonvector/slipgate/internal/system"
 )
 
-// systemInstallPlan is the bridge between interactive prompt collection
-// and non-interactive flag-based installation.
-//
-// In interactive mode, collectSystemInstallPlanInteractive should populate this
-// from the current prompt logic.
-//
-// In Iranux/non-interactive mode, collectSystemInstallPlanFromFlags populates it
-// from command-line flags.
+// installOutput is intentionally small so this patch does not depend on the
+// concrete output type used by actions.Context.
+type installOutput interface {
+	Info(string)
+	Warning(string)
+}
+
+// systemInstallPlan is the shared structure between interactive prompt mode
+// and non-interactive flag mode.
 type systemInstallPlan struct {
-	Transports      []string
-	PlannedTunnels  []config.TunnelConfig
+	Transports     []string
+	PlannedTunnels []config.TunnelConfig
 
 	DirectSOCKS bool
 	SetupSOCKS  bool
@@ -107,16 +101,18 @@ type systemInstallPlan struct {
 	WarpIPv6   bool
 }
 
-// collectSystemInstallPlanFromFlags creates the same install plan normally
-// created by the prompt phase, but reads values from command-line flags.
+// collectSystemInstallPlanFromFlags builds the same install plan normally
+// produced by the interactive prompt phase, but reads values from flags.
 //
-// This function must not call prompt.*.
+// This function must never call prompt.*.
 func collectSystemInstallPlanFromFlags(
 	ctx *actions.Context,
-	out actions.Output,
+	out installOutput,
 	cfg *config.Config,
 ) (*systemInstallPlan, error) {
-	transports := splitCSV(ctx.GetArg("transports"))
+	rawTransports := splitCSV(ctx.GetArg("transports"))
+	transports := expandTransportSelection(rawTransports)
+
 	if len(transports) == 0 {
 		return nil, actions.NewError(actions.SystemInstall, "--transports is required in non-interactive mode", nil)
 	}
@@ -159,6 +155,7 @@ func collectSystemInstallPlanFromFlags(
 			break
 		}
 	}
+
 	if !needsBackend {
 		backend = ""
 	}
@@ -183,6 +180,7 @@ func collectSystemInstallPlanFromFlags(
 		switch selectedTransport {
 		case config.TransportSSH, config.TransportSOCKS, config.TransportStunTLS:
 			implicitBackend := config.BackendSSH
+
 			if selectedTransport == config.TransportSOCKS {
 				implicitBackend = config.BackendSOCKS
 				directSOCKS = true
@@ -216,6 +214,7 @@ func collectSystemInstallPlanFromFlags(
 			if selectedTransport == config.TransportSOCKS {
 				setupSOCKS = true
 			}
+
 			continue
 
 		case config.TransportDNSTT, config.TransportVayDNS, config.TransportSlipstream, config.TransportNaive:
@@ -234,6 +233,7 @@ func collectSystemInstallPlanFromFlags(
 				naiveEmail = "admin@" + baseDomainOf(domain)
 			}
 			if naiveDecoyURL == "" {
+				// Deterministic fallback for non-interactive installs.
 				naiveDecoyURL = "https://www.microsoft.com"
 			}
 		}
@@ -249,6 +249,7 @@ func collectSystemInstallPlanFromFlags(
 
 			if backend == "both" && selectedTransport != config.TransportNaive {
 				tag = cfg.UniqueTag(selectedTransport + "-" + b)
+
 				if b == config.BackendSSH {
 					tunnelDomain = sshDomainForTransport(ctx, selectedTransport, baseDomain, domain)
 				}
@@ -348,6 +349,84 @@ func splitCSV(value string) []string {
 	return result
 }
 
+// expandTransportSelection expands "all" or legacy menu value "8" into all
+// supported transports and removes duplicates while preserving order.
+//
+// Iranux UI should send "all".
+// "8" is accepted only for backward compatibility with old menu semantics.
+func expandTransportSelection(values []string) []string {
+	allTransports := []string{
+		config.TransportDNSTT,
+		config.TransportVayDNS,
+		config.TransportSlipstream,
+		config.TransportNaive,
+		config.TransportSSH,
+		config.TransportSOCKS,
+		config.TransportStunTLS,
+	}
+
+	var expanded []string
+	seen := map[string]bool{}
+
+	add := func(v string) {
+		v = normalizeTransportValue(v)
+		if v == "" {
+			return
+		}
+		if !seen[v] {
+			seen[v] = true
+			expanded = append(expanded, v)
+		}
+	}
+
+	for _, v := range values {
+		normalized := normalizeTransportValue(v)
+		if normalized == "all" || normalized == "8" {
+			for _, t := range allTransports {
+				add(t)
+			}
+			continue
+		}
+
+		add(normalized)
+	}
+
+	return expanded
+}
+
+func normalizeTransportValue(value string) string {
+	v := strings.ToLower(strings.TrimSpace(value))
+
+	switch v {
+	case "all", "8":
+		return v
+
+	case "dnstt", "noizdns", "dnstt/noizdns":
+		return config.TransportDNSTT
+
+	case "vaydns", "vay-dns":
+		return config.TransportVayDNS
+
+	case "slipstream", "slipstream-server":
+		return config.TransportSlipstream
+
+	case "naive", "naiveproxy", "naive-proxy":
+		return config.TransportNaive
+
+	case "ssh":
+		return config.TransportSSH
+
+	case "socks", "socks5":
+		return config.TransportSOCKS
+
+	case "stuntls", "stun-tls", "stun_tls":
+		return config.TransportStunTLS
+
+	default:
+		return v
+	}
+}
+
 func flagBool(ctx *actions.Context, name string) bool {
 	v := strings.ToLower(strings.TrimSpace(ctx.GetArg(name)))
 	return v == "1" || v == "true" || v == "yes" || v == "y"
@@ -370,10 +449,12 @@ func intArg(ctx *actions.Context, name string, fallback int) int {
 	if raw == "" {
 		return fallback
 	}
+
 	v, err := strconv.Atoi(raw)
 	if err != nil {
 		return fallback
 	}
+
 	return v
 }
 
@@ -411,6 +492,7 @@ func domainForTransport(ctx *actions.Context, transportName, baseDomain string) 
 			return baseDomain
 		}
 	}
+
 	return ""
 }
 
@@ -440,6 +522,7 @@ func sshDomainForTransport(ctx *actions.Context, transportName, baseDomain, fall
 			return "ss." + baseDomain
 		}
 	}
+
 	return fallback
 }
 
@@ -453,5 +536,6 @@ func baseDomainOf(domain string) string {
 	if len(parts) <= 2 {
 		return domain
 	}
+
 	return strings.Join(parts[len(parts)-2:], ".")
 }
