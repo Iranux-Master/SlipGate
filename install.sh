@@ -343,9 +343,9 @@ OS=$(uname -s | tr '[:upper:]' '[:lower:]')
 BINARY="slipgate-${OS}-${ARCH}"
 
 if [[ -n "$SLIPGATE_RELEASE_TAG" ]]; then
-    URL="https://github.com/${REPO}/releases/download/${SLIPGATE_RELEASE_TAG}/${BINARY}"
+    URL="https://github.com/iranux-master/slipgate/main/releases/download/${SLIPGATE_RELEASE_TAG}/${BINARY}"
 else
-    URL="https://github.com/${REPO}/releases/latest/download/${BINARY}"
+    URL="https://github.com/iranux-master/slipgate/main/releases/latest/download/${BINARY}"
 fi
 
 echo -e "${CYAN}"
